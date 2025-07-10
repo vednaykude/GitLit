@@ -1,12 +1,74 @@
-# React + Vite
+# GitLit
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+GitLit is an AI-powered documentation and analysis tool for GitHub repositories. It features a modern React + Vite frontend and a FastAPI backend, enabling seamless documentation generation, repository analysis, and Confluence integration.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **GitHub Integration:**
+  - Select a GitHub repository and branch.
+  - Fetch branches and analyze collaborators.
+- **AI Documentation Generation:**
+  - Generate usage guides (README) and changelogs using Google Gemini.
+  - View and copy generated markdown documentation.
+- **Confluence Export:**
+  - Save generated documentation directly to Confluence as a new page.
+- **Collaborator Dashboard:**
+  - Visualize and analyze repository collaborators and their contributions.
+- **Chatbot Assistant:**
+  - Ask questions about repository history, commits, and development using an AI-powered chatbot.
 
-## Expanding the ESLint configuration
+## Tech Stack
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- **Frontend:** React, Vite, Tailwind CSS
+- **Backend:** FastAPI (Python), Google Gemini API, Confluence API
+
+## Getting Started
+
+### Prerequisites
+- Node.js & npm
+- Python 3.10+
+- [Confluence API credentials](https://developer.atlassian.com/cloud/confluence/rest/)
+- Google Gemini API key
+
+### Installation
+
+1. **Clone the repository:**
+   ```sh
+   git clone <your-repo-url>
+   cd GitLit
+   ```
+2. **Install frontend dependencies:**
+   ```sh
+   npm install
+   ```
+3. **Install backend dependencies:**
+   ```sh
+   cd backend
+   pip install -r requirements.txt
+   ```
+4. **Set up environment variables:**
+   - Create a `.env` file in `backend/` with your Confluence and Gemini API credentials.
+
+### Running the App
+
+- **Start the backend:**
+  ```sh
+  cd backend
+  uvicorn backend:app --reload
+  ```
+- **Start the frontend:**
+  ```sh
+  npm run dev
+  ```
+
+The frontend runs on `http://localhost:5173` and the backend on `http://localhost:8000` by default.
+
+## Project Structure
+
+- `src/` — React frontend components
+- `backend/` — FastAPI backend
+- `public/` — Static assets
+
+## License
+
+MIT
