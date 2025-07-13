@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 import base64
 import json
 from urllib.parse import quote
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
 
 load_dotenv()
 
@@ -181,6 +183,9 @@ async def get_github_branches(owner: str, repo: str) -> List[BranchInfo]:
             ))
         
         return branches
+
+# Temporary storage for evolution-summary markdown (in-memory dict, keyed by repo+branch)
+evolution_summary_cache = {}
 
 # API Endpoints
 @app.get("/")
@@ -396,6 +401,10 @@ async def generate_evolution_summary(repo_url: str, branch: str):
 
        # Generate AI-enhanced summary using Gemini
        ai_enhanced_summary = get_how_we_got_here_markdown(summary, repo_url, branch)
+       
+       # Cache the evolution-summary markdown in memory
+       cache_key = f"{repo_url}::{branch}"
+       evolution_summary_cache[cache_key] = ai_enhanced_summary
        
        processing_time = (datetime.now() - start_time).total_seconds()
        
@@ -1065,6 +1074,35 @@ async def get_project_stats():
         raise HTTPException(status_code=500, detail=f"Error fetching project stats: {str(e)}")
 
 
+@app.get("/api/commits")
+async def get_commits(repo_url: str, branch: str):
+    """Return a list of commits for a given repo and branch."""
+    owner, repo = parse_github_url(repo_url)
+    headers = {}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
+        headers["Accept"] = "application/vnd.github.v3+json"
+    async with httpx.AsyncClient() as client:
+        commits = []
+        page = 1
+        while True:
+            commits_url = f"https://api.github.com/repos/{owner}/{repo}/commits?sha={branch}&per_page=100&page={page}"
+            resp = await client.get(commits_url, headers=headers)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail="Error fetching commits from GitHub")
+            page_commits = resp.json()
+            if not page_commits:
+                break
+            for c in page_commits:
+                commits.append({
+                    "sha": c["sha"],
+                    "author_name": c["commit"]["author"]["name"],
+                    "message": c["commit"]["message"],
+                    "date": c["commit"]["author"]["date"]
+                })
+            page += 1
+    return {"commits": commits}
+
 async def save_to_confluence(title: str, markdown_content: str, space_key: str = None) -> dict:
     """Save markdown content to Confluence as a new page"""
     
@@ -1163,6 +1201,123 @@ def markdown_to_confluence_storage(markdown_content: str) -> str:
     content = content.replace('\n', '<br/>')
     
     return content
+from fastapi import Body
+from pydantic import BaseModel
+class EvolutionSummaryRequest(BaseModel):
+    markdown: str
+    repo_url: Optional[str] = None
+    branch: Optional[str] = None
+
+@app.post("/api/parse-evolution-summary")
+def parse_evolution_summary(request: EvolutionSummaryRequest):
+    """
+    Parse the evolution-summary markdown and return a JSON array of commits with sha, author, date, message, and changes.
+    """
+    # If markdown is not provided, try to get from cache using repo_url and branch
+    markdown = request.markdown
+    if not markdown.strip() and request.repo_url and request.branch:
+        cache_key = f"{request.repo_url}::{request.branch}"
+        markdown = evolution_summary_cache.get(cache_key, "")
+    # Debug: print the markdown being parsed
+    print("[DEBUG] Markdown sent to parse_evolution_summary:\n", markdown[:1000])
+    commits = []
+    commit_regex = re.compile(r"### Commit `([a-f0-9]+)`[\s\S]*?- \*\*Date:\*\* ([^\n]+)\n- \*\*Author:\*\* ([^\n]+)\n- \*\*Message:\*\* ([^\n]+)\n([\s\S]*?)(?=\n---|$)")
+    for match in commit_regex.finditer(markdown):
+        sha = match.group(1)
+        date = match.group(2)
+        author = match.group(3)
+        message = match.group(4)
+        changes = match.group(5).strip()
+        commits.append({
+            "sha": sha,
+            "date": date,
+            "author": author,
+            "message": message,
+            "changes": changes
+        })
+    # Remove from cache after use
+    if request.repo_url and request.branch:
+        cache_key = f"{request.repo_url}::{request.branch}"
+        if cache_key in evolution_summary_cache:
+            del evolution_summary_cache[cache_key]
+    print(f"[DEBUG] Parsed {len(commits)} commits from markdown.")
+    return {"commits": commits}
+
+@app.get("/api/evolution-timeline")
+async def generate_evolution_timeline(repo_url: str, branch: str, n_clusters: int = 4):
+    """
+    Generate a code evolution timeline by clustering commits into eras and summarizing each era using Gemini.
+    """
+    owner, repo = parse_github_url(repo_url)
+    headers = {}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
+        headers["Accept"] = "application/vnd.github.v3+json"
+    async with httpx.AsyncClient() as client:
+        # Fetch all commits
+        commits = []
+        page = 1
+        while True:
+            commits_url = f"https://api.github.com/repos/{owner}/{repo}/commits?sha={branch}&per_page=100&page={page}"
+            resp = await client.get(commits_url, headers=headers)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail="Error fetching commits from GitHub")
+            page_commits = resp.json()
+            if not page_commits:
+                break
+            for c in page_commits:
+                commits.append({
+                    "sha": c["sha"],
+                    "author": c["commit"]["author"]["name"],
+                    "date": c["commit"]["author"]["date"],
+                    "message": c["commit"]["message"],
+                })
+            page += 1
+    if not commits:
+        raise HTTPException(status_code=404, detail="No commits found on this branch.")
+    # Cluster commit messages
+    messages = [c["message"] for c in commits]
+    vectorizer = TfidfVectorizer(stop_words="english")
+    X = vectorizer.fit_transform(messages)
+    n_clusters = min(n_clusters, len(commits))
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(X)
+    # Group commits by cluster
+    eras = []
+    for cluster_id in range(n_clusters):
+        era_commits = [c for i, c in enumerate(commits) if labels[i] == cluster_id]
+        # Sort by date
+        era_commits.sort(key=lambda c: c["date"])
+        # Summarize era with Gemini
+        prompt = (
+            "You are an expert software project historian. "
+            "Given the following list of commit messages, authors, and dates, "
+            "write a concise but insightful summary of this era in the project's evolution. "
+            "Highlight major architectural changes, pivots, and the reasoning behind them. "
+            "Give this era a descriptive title.\n\n"
+            "Commits:\n" +
+            "\n".join([f"- {c['date']} {c['author']}: {c['message']}" for c in era_commits]) +
+            "\n\nRespond in JSON with keys: era_title, summary."
+        )
+        try:
+            gemini_result = gemini_response(prompt)
+            # Try to parse JSON from Gemini
+            import json as pyjson
+            era_json = pyjson.loads(gemini_result)
+            era_title = era_json.get("era_title") or f"Era {cluster_id+1}"
+            summary = era_json.get("summary") or gemini_result
+        except Exception:
+            era_title = f"Era {cluster_id+1}"
+            summary = gemini_result
+        eras.append({
+            "era_title": era_title,
+            "summary": summary,
+            "commits": era_commits
+        })
+    # Sort eras by first commit date
+    eras.sort(key=lambda e: e["commits"][0]["date"] if e["commits"] else "")
+    return {"eras": eras}
+
 # Run the application
 if __name__ == "__main__":
     uvicorn.run("backend:app", host="0.0.0.0", port=8000, reload=True)

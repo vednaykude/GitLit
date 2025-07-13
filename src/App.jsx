@@ -6,6 +6,7 @@ import GenerateDocumentation from "./components/GenerateDocumentation";
 import MarkdownDisplay from "./components/MarkdownDisplay";
 import ChatBot from "./components/ChatBot";
 import Dashboard from "./components/Dashboard";
+import { TimelineButton, EvolutionTimeline } from "./components/CommitTimeline";
 
 function App() {
   const [branches, setBranches] = useState([]);
@@ -16,6 +17,7 @@ function App() {
   const [documentationError, setDocumentationError] = useState('');
   const [documentationLoading, setDocumentationLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('workflow'); // 'workflow' or 'dashboard'
+  const [timelineOpen, setTimelineOpen] = useState(false);
 
   const handleBranchesLoaded = (branchData, url) => {
     setBranches(branchData);
@@ -43,6 +45,9 @@ function App() {
     }
     return 'Documentation';
   };
+
+  // Only enable timeline if repo and branch are selected
+  const isTimelineEnabled = !!repoUrl && !!selectedBranch;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -150,12 +155,20 @@ function App() {
           </div>
         )}
       </main>
-
       {/* ChatBot Widget */}
       <ChatBot 
         repoUrl={repoUrl}
         selectedBranch={selectedBranch}
       />
+      {/* Timeline Button and Modal */}
+      <TimelineButton onClick={() => isTimelineEnabled && setTimelineOpen(true)} disabled={!isTimelineEnabled} />
+      {timelineOpen && isTimelineEnabled && (
+        <EvolutionTimeline
+          repoUrl={repoUrl}
+          branch={selectedBranch}
+          onClose={() => setTimelineOpen(false)}
+        />
+      )}
     </div>
   );
 }
